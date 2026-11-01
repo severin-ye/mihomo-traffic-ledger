@@ -215,26 +215,30 @@ type mihomoProxiesResponse struct {
 }
 
 type service struct {
-	db                     *sql.DB
-	client                 *http.Client
-	now                    func() time.Time
-	cfg                    config
-	mu                     sync.Mutex
-	mihomoSettings         mihomoSettings
-	domainGroupingEnabled  bool
-	lastConnections        map[string]connection
-	activeSessionKeys      map[string]string
-	monitorStartedAt       int64
-	lastUploadTotal        int64
-	lastDownloadTotal      int64
-	lastAutoSwitchAt       int64
-	lastAutoSwitchMin      int64
-	lastCleanup            time.Time
-	lastVacuum             time.Time
-	lastSummaryBuild       time.Time
-	aggregateBuffer        map[string]*aggregatedEntry
-	hostMinuteWindows      map[string]*hostTrafficWindow
-	aggregateRetentionDays int
+	db                      *sql.DB
+	client                  *http.Client
+	transportMu             sync.Mutex
+	mihomoTransportEndpoint string
+	mihomoTransportBase     string
+	mihomoTransportClient   *http.Client
+	now                     func() time.Time
+	cfg                     config
+	mu                      sync.Mutex
+	mihomoSettings          mihomoSettings
+	domainGroupingEnabled   bool
+	lastConnections         map[string]connection
+	activeSessionKeys       map[string]string
+	monitorStartedAt        int64
+	lastUploadTotal         int64
+	lastDownloadTotal       int64
+	lastAutoSwitchAt        int64
+	lastAutoSwitchMin       int64
+	lastCleanup             time.Time
+	lastVacuum              time.Time
+	lastSummaryBuild        time.Time
+	aggregateBuffer         map[string]*aggregatedEntry
+	hostMinuteWindows       map[string]*hostTrafficWindow
+	aggregateRetentionDays  int
 }
 
 type aggregatedEntry struct {
@@ -318,6 +322,8 @@ func main() {
 		aggregateBuffer:        make(map[string]*aggregatedEntry),
 		hostMinuteWindows:      make(map[string]*hostTrafficWindow),
 	}
+
+	defer svc.closeMihomoIdleConnections()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -1107,7 +1113,7 @@ func (s *service) listControllableProxyGroups(settings mihomoSettings) ([]contro
 		return nil, errors.New("mihomo url is not configured")
 	}
 
-	baseURL, client, err := resolveMihomoTransport(settings.URL, s.client)
+	baseURL, client, err := s.resolveMihomoTransport(settings.URL)
 	if err != nil {
 		return nil, err
 	}
@@ -1175,7 +1181,7 @@ func (s *service) switchProxyGroup(settings mihomoSettings, group controllablePr
 		return err
 	}
 
-	baseURL, client, err := resolveMihomoTransport(settings.URL, s.client)
+	baseURL, client, err := s.resolveMihomoTransport(settings.URL)
 	if err != nil {
 		return err
 	}
@@ -1370,6 +1376,7 @@ func (s *service) setMihomoSettings(settings mihomoSettings) {
 	defer s.mu.Unlock()
 
 	if settings != s.mihomoSettings {
+		s.closeMihomoIdleConnections()
 		s.lastConnections = make(map[string]connection)
 		s.lastUploadTotal = 0
 		s.lastDownloadTotal = 0
@@ -1424,7 +1431,7 @@ func (s *service) fetchConnections(ctx context.Context, settings mihomoSettings)
 		return nil, errors.New("mihomo url is not configured")
 	}
 
-	baseURL, client, err := resolveMihomoTransport(settings.URL, s.client)
+	baseURL, client, err := s.resolveMihomoTransport(settings.URL)
 	if err != nil {
 		return nil, err
 	}

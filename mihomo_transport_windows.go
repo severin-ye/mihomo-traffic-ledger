@@ -15,6 +15,9 @@ func defaultMihomoEndpoint() string { return defaultWindowsMihomoEndpoint }
 
 func newNamedPipeHTTPClient(pipePath string) (*http.Client, error) {
 	transport := &http.Transport{
+		MaxIdleConns:        2,
+		MaxIdleConnsPerHost: 2,
+		IdleConnTimeout:     30 * time.Second,
 		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 			return winio.DialPipeContext(ctx, pipePath)
 		},
